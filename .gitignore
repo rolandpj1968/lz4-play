@@ -1,0 +1,11 @@
+# These 4 lines to ignore exe's without extensions (ugh)
+*
+!Makefile
+!*.*
+!*/
+
+*~
+*.o
+*.s
+*.out
+
