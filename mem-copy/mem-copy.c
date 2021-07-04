@@ -1,6 +1,5 @@
 #include <string.h>
 
-
 #include "types.h"
 
 // It's really hard to get gcc to avoid alignment assumptions and
@@ -33,7 +32,7 @@ static inline u64 write_u64(u8* p, u64 v) {
   p[7] = (u8) (v >> (7*8));
 }
 
-void memcpy_it(void* dst, const void* src, size_t len) {
+void libc_memcpy(void* dst, const void* src, size_t len) {
   memcpy(dst, src, len);
 }
 
@@ -43,7 +42,7 @@ void memcpy_it(void* dst, const void* src, size_t len) {
 // However, gcc -O1 does very basic optimisation keeping vars in
 //   registers and this is eventually ~2x slower than memcpy().
 // It's also ~7x faster at -O1 than mem_copy_u64 at -O3 (!!!)
-void mem_copy_u64_raw(void* dst, const void* src, size_t len) {
+void mem_copy_u64_simple(void* dst, const void* src, size_t len) {
   u64* dst_u64 = (u64*)dst;
   const u64* src_u64 = (const u64*)src;
   
@@ -97,7 +96,7 @@ void mem_copy_u64_restrict(void* dst, void* src, size_t len) {
 // However, gcc -O1 does very basic optimisation other than keeping vars in
 //   registers and this is eventually only ~20% slower than memcpy() !!!
 // Winner!
-void mem_copy_u64_u64_raw(void* dst, const void* src, size_t len) {
+void mem_copy_u64_u64_simple(void* dst, const void* src, size_t len) {
   u64* dst_u64 = (u64*)dst;
   const u64* src_u64 = (const u64*)src;
   

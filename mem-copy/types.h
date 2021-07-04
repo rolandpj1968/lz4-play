@@ -13,6 +13,8 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
+typedef void mem_copy_fn(void* dst, const void* src, size_t len);
+	
 #ifdef __cplusplus
 }
 #endif
