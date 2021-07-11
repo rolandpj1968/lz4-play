@@ -3,6 +3,8 @@ mem-copy-test: mem-copy-test.o mem-copy.o
 
 mem-copy.o: mem-copy.c mem-copy.h types.h Makefile
 	# see source for discussion of why -O1
+	# gcc -S -O1 mem-copy.c
+	# gcc -c -O1 mem-copy.c
 	gcc -S -O1 mem-copy.c
 	gcc -c -O1 mem-copy.c
 

@@ -13,9 +13,9 @@ const size_t KiB = 1 << 10;
 
 const double ms_per_s = 1000.0;
 
-//static const size_t copy_len = 2*MiB;
+static const size_t copy_len = 2*MiB;
 //static const size_t copy_len = 4*KiB;
-static const size_t copy_len = 128;
+//static const size_t copy_len = 128;
 //static const size_t copy_len = 32;
 //static const size_t copy_len = 27;
 //static const size_t copy_len = 24;
