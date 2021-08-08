@@ -24,6 +24,41 @@ static const size_t copy_len = 2*MiB;
 const unsigned n_loops = 4;
 const unsigned n_iters = 2*MiB/copy_len * 1000;
 
+// Emulate lz4 copying...
+static void lz4_emu_copy(void* dst, const void* src, size_t len) {
+  const u8* src_u8 = (const u8*)src;
+  u8* dst_u8 = (u8*)dst;
+
+  const u8* src_limit = src_u8 + len;
+
+  const u8* src_limit_fast = src_limit - 32 - 64;
+
+  while(src_u8 < src_limit_fast) {
+    *(u64*)(dst_u8 + 0) = *(const u64*)(src_u8 + 0);
+    *(u64*)(dst_u8 + 8) = *(const u64*)(src_u8 + 8);
+    // *(u64*)(dst_u8 + 16) = *(const u64*)(src_u8 + 16);
+    // *(u64*)(dst_u8 + 24) = *(const u64*)(src_u8 + 24);
+
+    src_u8 += 3;
+    dst_u8 += 3;
+
+    *(u64*)(dst_u8 + 0) = *(const u64*)(src_u8 + 0);
+    *(u64*)(dst_u8 + 8) = *(const u64*)(src_u8 + 8);
+    *(u64*)(dst_u8 + 16) = *(const u64*)(src_u8 + 16);
+    *(u64*)(dst_u8 + 24) = *(const u64*)(src_u8 + 24);
+    // *(u64*)(dst_u8 + 32) = *(const u64*)(src_u8 + 32);
+    // *(u64*)(dst_u8 + 40) = *(const u64*)(src_u8 + 40);
+    // *(u64*)(dst_u8 + 48) = *(const u64*)(src_u8 + 48);
+    // *(u64*)(dst_u8 + 56) = *(const u64*)(src_u8 + 56);
+
+    src_u8 += 11;
+    dst_u8 += 11;
+  }
+
+  memcpy(dst_u8, src_u8, src_limit - src_u8);
+}
+
+
 // Add 16 for overrun and 7 for alignment offset
 static u8 src[copy_len + 16 + 7];
 static u8 dst[copy_len + 16 + 7];
@@ -54,6 +89,8 @@ int main(int argc, char* argv[]) {
   
     for(size_t src_offset = 0; src_offset < 8; src_offset++) {
       for(size_t dst_offset = 0; dst_offset < 8; dst_offset++) {
+	
+	time_mem_copy_fn_ms("lz4_emulation", lz4_emu_copy, dst + dst_offset, src + src_offset, copy_len, n_iters);
 	
 	time_mem_copy_fn_ms("mem_copy_u64_simple", mem_copy_u64_simple, dst + dst_offset, src + src_offset, copy_len, n_iters);
 

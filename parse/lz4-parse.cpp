@@ -12,6 +12,8 @@
 #include <sstream>
 #include <utility>
 
+#include "decode.h"
+
 typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint16_t u16;
@@ -19,6 +21,11 @@ typedef uint8_t u8;
 
 typedef std::chrono::high_resolution_clock Time;
 typedef std::chrono::duration<double> dsec;
+
+const size_t MiB = 1 << 20;
+const size_t KiB = 1 << 10;
+
+const double ms_per_s = 1000.0;
 
 namespace Util {
     
@@ -413,6 +420,36 @@ int main(int argc, char* argv[]) {
 
       if(block_header.is_compressed()) {
 	show_sequences(buf, block_header.data_length());
+
+	// Warm up decode
+	static u8 out_buf[4*1024*1024];
+	//ssize_t raw_len = lz4_decode_block_default(out_buf, sizeof(out_buf), buf, block_header.data_length());
+	ssize_t raw_len = lz4_decode_block_fast(out_buf, sizeof(out_buf), buf, block_header.data_length());
+	printf("    block %d: decode-len %ld\n", block_no, raw_len);
+
+	if(raw_len >= 0) {
+	  // Time decode
+	  auto t0 = Time::now();
+	  
+	  const unsigned n_iters = 256;
+	  for(unsigned i = 0; i < n_iters; i++) {
+	    //ssize_t raw_len2 = lz4_decode_block_default(out_buf, sizeof(out_buf), buf, block_header.data_length());
+	    ssize_t raw_len2 = lz4_decode_block_fast(out_buf, sizeof(out_buf), buf, block_header.data_length());
+	    if(raw_len2 != raw_len) {
+	      printf("                      abort bad raw len %ld expecting %ld\n", raw_len2, raw_len);
+	      break;
+	    }
+	  }
+	  auto t1 = Time::now();
+	  dsec ds1 = t1 - t0;
+	  double secs1 = ds1.count();
+	  
+	  double ms = secs1 * ms_per_s;
+	  size_t copy_len = (size_t)raw_len;
+	  double mib_per_s = copy_len*n_iters/MiB / secs1;
+	  
+	  printf("decompressed %zu bytes %u times in %9.3lfms - %10.3lfMiB/s\n", copy_len, n_iters, ms, mib_per_s);
+	}
       }
 
       buf += block_size;

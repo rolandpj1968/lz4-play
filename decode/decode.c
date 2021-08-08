@@ -1,3 +1,4 @@
+#include <stdio.h>
 // memcpy, memmove
 #include <string.h>
 
@@ -23,6 +24,9 @@
 // distinguished length extension value for "long lits"
 #define LITS_LEN_EXTENSION_EXTRA (255)
 
+// Speculatively read ahead 1 byte of long lit
+#define LONG_MATCH_LOOKAHEAD (1)
+
 // bit-mask of MATCH_LEN in token
 #define MATCH_LEN_MASK (0xf)
 // MATCH_LEN offset - minimum match len is 4
@@ -36,22 +40,137 @@
 #define MATCH_OFFSET_LEN (2)
 
 // Total speculative look-ahead on input buffer
-#define IN_LOOKAHEAD (LITS_LEN_MATCH_LEN_TOKEN_SIZE + LITS_LOOKAHEAD + LONG_LIT_LOOKAHEAD + MATCH_OFFSET_LEN)
+#define IN_LOOKAHEAD (LITS_LEN_MATCH_LEN_TOKEN_SIZE + LITS_LOOKAHEAD + LONG_LIT_LOOKAHEAD + MATCH_OFFSET_LEN + LONG_MATCH_LOOKAHEAD)
 
 // Total speculative look-ahead on output buffer
 #define OUT_LOOKAHEAD (LITS_LOOKAHEAD + MATCH_LOOKAHEAD)
 
 
 // TODO
+#define xCONFIG_USE_LIKELY
+#define register
+
+#ifdef CONFIG_USE_LIKELY
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#else
 #define likely(x) x
 #define unlikely(x) x
+#endif //def CONFIG_USE_LIKELY
+
+static inline size_t token_to_lits_len(u8 token) {
+  return token >> LITS_LEN_BITS;
+}
+
+static inline size_t token_to_match_len(u8 token) {
+  return (token & MATCH_LEN_MASK) + MATCH_LEN_MIN;
+}
+
+// No limitations
+// @return decoded data length or -ve error val
+ssize_t lz4_decode_block_default(void* out_void, const size_t out_len, const void* in_void, const size_t in_len) {
+  u8* out_start = (u8*)out_void;
+  u8* out = (u8*)out_void;
+  u8* out_limit = out + out_len;
   
+  //const u8* in_start = (u8*)in_void;
+  const u8* in = (const u8*)in_void;
+  const u8* in_limit = in + in_len;
+
+  while(in < in_limit && out < out_limit) {
+    //printf("                         sequence at in %lu out %lu\n", in - in_start, out - out_start);
+    // Parse literals- and match length token
+    u8 lits_len_match_len_token = *in++;
+    size_t lits_len = token_to_lits_len(lits_len_match_len_token);
+    size_t match_len = token_to_match_len(lits_len_match_len_token);
+
+    //printf("                           token-lits-len %lu, token-match-len %lu\n", lits_len, match_len);
+    
+    // Handle literals length extension
+    if(lits_len == LONG_LITS_LEN) {
+      u8 lits_len_extension;
+      do {
+	if(!(in < in_limit)) {
+	  return -LZ4_DECODE_ERR_INPUT_OVERFLOW;
+	}
+	lits_len_extension = *in++;
+	lits_len += lits_len_extension;
+      } while(lits_len_extension == LITS_LEN_EXTENSION_EXTRA);
+    }
+
+    //printf("                                       lits-len %lu\n", lits_len);
+    
+    // Handle literals
+    if(!(in + lits_len <= in_limit)) {
+      return -LZ4_DECODE_ERR_INPUT_OVERFLOW;
+    }
+    if(!(out + lits_len <= out_limit)) {
+      return -LZ4_DECODE_ERR_OUTPUT_OVERFLOW;
+    }
+
+    memcpy(out, in, lits_len);
+    
+    out += lits_len;
+    in += lits_len;
+
+    // The last sequence in a block does not have a match - handle this special case.
+    if(in < in_limit) {
+      // Handle match offset
+      if(!(in + MATCH_OFFSET_LEN <= in_limit)) {
+	return -LZ4_DECODE_ERR_INPUT_OVERFLOW;
+      }
+      
+      size_t match_offset = (size_t)in[0] + (((size_t)in[1]) << 8);
+
+      in += MATCH_OFFSET_LEN;
+      
+      //printf("                                       match-offset %lu\n", match_offset);
+      
+      // Do comparison this way to avoid underflow of out_start.
+      if(out - out_start < match_offset) {
+	return -LZ4_DECODE_ERR_MATCH_OFFSET_TOO_LARGE;
+      }
+
+      // Handle match length extension
+      if(match_len == LONG_MATCH_LEN) {
+	u8 match_len_extension;
+	do {
+	  if(!(in < in_limit)) {
+	    return -LZ4_DECODE_ERR_INPUT_OVERFLOW;
+	  }
+	  match_len_extension = *in++;
+	  match_len += match_len_extension;
+	} while(match_len_extension == MATCH_LEN_EXTENSION_EXTRA);
+      }
+
+      //printf("                                       match-len %lu\n", match_len);
+    
+      // Handle match bytes
+      // TODO - this can actually overflow top-end of address range :D
+      if(!(out + match_len <= out_limit)) {
+	return -LZ4_DECODE_ERR_OUTPUT_OVERFLOW;
+      }
+
+      u8* match = out - match_offset;
+      // Input can overlap output so use memmove()
+      memmove(out, match, match_len);
+      
+      out += match_len;
+    }
+  }
+
+  if(in < in_limit) {
+    return -LZ4_DECODE_ERR_OUTPUT_OVERFLOW;
+  }
+
+  return out - out_start;
+}
 
 // Limitations:
 // Assumes non-aligned memory accesses work with primitive C integer types - undefined officially
 // Assumes little-endian
 // @return decoded data length or -ve error val
-ssize_t lz4_decode_block(void* out_void, const size_t out_len, const void* in_void, const size_t in_len) {
+ssize_t lz4_decode_block_fast(void* out_void, const size_t out_len, const void* in_void, const size_t in_len) {
   register u8* restrict out_start = (u8*)out_void;
   register u8* restrict out = (u8*)out_void;
   u8* const out_limit = out + out_len;
@@ -71,8 +190,8 @@ ssize_t lz4_decode_block(void* out_void, const size_t out_len, const void* in_vo
   //   sufficient.
   while(likely(out < out_fast_limit && in < in_fast_limit)) {
     u8 lits_len_match_len_token = *in++;
-    size_t lits_len = lits_len_match_len_token >> LITS_LEN_BITS;
-    register size_t match_len = (lits_len_match_len_token & MATCH_LEN_MASK) + MATCH_LEN_MIN;
+    size_t lits_len = token_to_lits_len(lits_len_match_len_token);
+    register size_t match_len = token_to_match_len(lits_len_match_len_token);
 
     // Speculatively read and write 16 bytes of literals assuming lit-len < 15.
     u64 lits1 = *(const u64*)(in+0);
@@ -127,7 +246,7 @@ ssize_t lz4_decode_block(void* out_void, const size_t out_len, const void* in_vo
       memcpy(out, in, lits_len);
 
       in += lits_len;
-      out + lits_len;
+      out += lits_len;
 
       match_offset = *(const u16*)in;
       in += MATCH_OFFSET_LEN;
@@ -144,6 +263,7 @@ ssize_t lz4_decode_block(void* out_void, const size_t out_len, const void* in_vo
 
     // Sanity check that the match is within the buffer - this can be avoided once we're
     //   more than 64KiB into the block but is it worth it?
+    // TODO - this can underflow out_start :(
     if(unlikely(match < out_start)) {
       return -LZ4_DECODE_ERR_MATCH_OFFSET_TOO_LARGE;
     }
@@ -172,7 +292,7 @@ ssize_t lz4_decode_block(void* out_void, const size_t out_len, const void* in_vo
 	- lits_len
 	- LITS_LEN_MATCH_LEN_TOKEN_SIZE;
       
-      // TODO add this to look-ahead
+      // Safe cos include in input lookahead
       size_t match_len_extension = *in++;
       match_len += match_len_extension;
       while(unlikely(match_len_extension == MATCH_LEN_EXTENSION_EXTRA)) {
@@ -238,15 +358,15 @@ ssize_t lz4_decode_block(void* out_void, const size_t out_len, const void* in_vo
 	}
 
 	// Fill with the match pattern.
-	u8* out_limit = out + match_len;
+	u8* out_match_limit = out + match_len;
 	do {
-	  *(u64*)(out+0) = matches1;
-	  *(u64*)(out+sizeof(u64)) = matches2;
+	  *(u64*)(out+0) = match_pattern;
+	  *(u64*)(out+sizeof(u64)) = match_pattern;
 	  out += 16;
-	} while(likely(out < out_limit));
+	} while(likely(out < out_match_limit));
 
 	// Fix speculative overrun
-	out = out_limit;
+	out = out_match_limit;
 	
       } else {
 	// Poorly aligned overlap - let memmove() deal with it.
@@ -262,7 +382,7 @@ ssize_t lz4_decode_block(void* out_void, const size_t out_len, const void* in_vo
     size_t out_so_far = out - out_start;
     size_t in_so_far = in - (const u8*)in_void;
     
-    ssize_t slow_rc = lz4_decode_block_slow(out, out_len - out_so_far, in, in_len - in_so_far);
+    ssize_t slow_rc = lz4_decode_block_default(out, out_len - out_so_far, in, in_len - in_so_far);
     
     if(slow_rc < 0) {
       // Error code
