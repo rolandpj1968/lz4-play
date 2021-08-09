@@ -86,10 +86,16 @@ int simple_suffix_sort_with_lcp(const u8* data, const u32 len, u32* SA, u32* LCP
   return rc;
 }
 
+#ifdef SIMPLE_SUFFIX_SORT_MAIN
+
+// exit()
+#include <cstdlib>
+
 int main() {
   printf("Hallo RPJ\n");
   
-  const char *data = "banana";
+  //const char *data = "banana";
+  const char *data = "abracadabra banana abracadabra";
   const u32 len = strlen(data);
 
   u32* SA = new u32[len];
@@ -110,3 +116,5 @@ int main() {
     printf("%8d [CP %8d]: %.*s\n", i, LCP[i], len-index, data+index);
   }
 }
+
+#endif //def SIMPLE_SUFFIX_SORT_MAIN
