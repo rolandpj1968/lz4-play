@@ -12,6 +12,8 @@ namespace LongestMatch {
   // scan backwards in case there is a better match.
   int scan_sa_forwards(const u32* SA, const u32* LCP, const u32 len, u32* LPM, u32* LML) {
     // Unmatched SA indexes - pair of (sa-index, common-prefix-length)
+    // The common-prefix-length of any item on the stack is the common prefix of the
+    // item and the item immediately above on the (upside-down) stack, or 0 for first item.
     // The stack is always ordered by data-index descending.
     std::vector<std::pair<u32, u32>> unmatched_stack;
 
@@ -19,6 +21,13 @@ namespace LongestMatch {
       // If this data index is lower than some of the unmatched indexes, then it's the
       // longest preceding match for those as-yet unmatched indexes.
       u32 data_index = SA[sa_index];
+
+      // The longest-common-prefix of the current suffix string, and the top-of-stack
+      // suffix string. Initially the top-of-stack suffix string is the immediately
+      // previous item in SA (suffix) order, because we pushed that item at the end
+      // of the previous loop.
+      // For the first loop iteration the stack is empty and LCP[0] is always 0.
+      u32 data_lcp = LCP[sa_index];
 
       while(!unmatched_stack.empty()) {
 	u32 unmatched_sa_index = unmatched_stack.back().first;
@@ -31,17 +40,21 @@ namespace LongestMatch {
 	  break;
 	}
 
-	// We have found the longest match.
-	// TODO u32 unmatched_lcp = unmatched_stack.back().second;
+	// The current item is the longest match of the top-of-stack item
+	
+	u32 unmatched_lcp = unmatched_stack.back().second;
 	unmatched_stack.pop_back();
 
 	LPM[unmatched_data_index] = data_index;
-	LML[unmatched_data_index] = 0; // TODO
+	LML[unmatched_data_index] = data_lcp;
+
+	// The common prefix of the current item with the next item on the stack.
+	data_lcp = std::min(data_lcp, unmatched_lcp);
       }
 
       // Push the current sa_index onto the stack - we'll find its longest match as we scan
       // forwards in the SA.
-      unmatched_stack.push_back(std::make_pair(sa_index, 0/*TODO*/));
+      unmatched_stack.push_back(std::make_pair(sa_index, data_lcp));
     }
 
     // Once we've scanned the whole SA, then any SA indexes remaining on the stack have
@@ -75,6 +88,13 @@ namespace LongestMatch {
       // longest preceding match for those as-yet unmatched indexes.
       u32 data_index = SA[sa_index];
 
+      // The longest-common-prefix of the current suffix string, and the top-of-stack
+      // suffix string. Initially the top-of-stack suffix string is the immediately
+      // previous item in SA (suffix) order, because we pushed that item at the end
+      // of the previous loop.
+      // For the first loop iteration the stack is empty and LCP[0] is always 0.
+      u32 data_lcp = sa_index_plus_one == len ? 0 : LCP[sa_index_plus_one];
+      
       while(!unmatched_stack.empty()) {
 	u32 unmatched_sa_index = unmatched_stack.back().first;
 	u32 unmatched_data_index = SA[unmatched_sa_index];
@@ -86,21 +106,25 @@ namespace LongestMatch {
 	  break;
 	}
 
-	// We have found the longest match.
-	u32 unmatched_lml = 0; // TODO unmatched_stack.back().second;
+	// The current item is the longest match of the top-of-stack item
+	
+	u32 unmatched_lcp = unmatched_stack.back().second;
 	unmatched_stack.pop_back();
 
-	// TODO - need LML populated correctly for this
-	// TODO - we should also prefer closer matches if lml is equal
-	if(LML[unmatched_data_index] < unmatched_lml) {
+	// Prefer longer matches; prefer closer matches
+	if((LML[unmatched_data_index] < data_lcp) ||
+	   ((LML[unmatched_data_index] == data_lcp) && (unmatched_data_index < data_index))) {
 	  LPM[unmatched_data_index] = data_index;
-	  LML[unmatched_data_index] = 0; // TODO
+	  LML[unmatched_data_index] = data_lcp;
 	}
+
+	// The common prefix of the current item with the next item on the stack.
+	data_lcp = std::min(data_lcp, unmatched_lcp);
       }
 
       // Push the current sa_index onto the stack - we'll find its longest match as we scan
       // forwards in the SA.
-      unmatched_stack.push_back(std::make_pair(sa_index, 0/*TODO*/));
+      unmatched_stack.push_back(std::make_pair(sa_index, data_lcp));
     }
 
     // Once we've scanned the whole SA, then any SA indexes remaining on the stack have
@@ -139,7 +163,7 @@ extern int longest_matches(const u8* data, const u32 len, u32* LPM, u32* LML) {
     goto out_delete;
   }
 
-  // TODO rc = LongestMatch::scan_sa_backwards(SA, LCP, len, LPM, LML);
+  rc = LongestMatch::scan_sa_backwards(SA, LCP, len, LPM, LML);
 
  out_delete:
   delete[] SA;
@@ -175,7 +199,7 @@ int main() {
   printf("data: %.*s\n\n", len, data);
 
   for(u32 i = 0; i < len; i++) {
-    printf("%8d: %*.*s - match %8d length %8d: %*.*s\n", i, len, len-i, data+i, LPM[i], LML[i], len, (LPM[i] == 0 ? 0 : len-LPM[i]), data+LPM[i]); // TODO fix when LML is implemented
+    printf("%8d: %*.*s - match %8d length %8d: %*.*s\n", i, len, len-i, data+i, LPM[i], LML[i], len, (LML[i] == 0 ? 0 : len-LPM[i]), data+LPM[i]);
   }
 }
 
