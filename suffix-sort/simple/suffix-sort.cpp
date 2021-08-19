@@ -58,7 +58,16 @@ namespace SimpleSuffixSort {
     }
   }
 
+  int n_cpp_std_sorts = 0;
+
   int cpp_std_sort_suffixes(const u8* data, const u32 len, u32* suffix_indexes, u32 n_suffixes) {
+    if(n_suffixes <= 1) {
+      // Nothing to do - it's already trivially sorted...
+      return SUFFIX_SORT_OK;
+    }
+
+    n_cpp_std_sorts++;
+
     // Sort using SuffixLess ordering
     std::sort(suffix_indexes, suffix_indexes + n_suffixes, SimpleSuffixSort::SuffixLess(data, len));
     
@@ -72,18 +81,27 @@ namespace SimpleSuffixSort {
   }
 
   static const size_t RADIX_BUF_SIZE = 256 + 1; // u8 range plus one extra
+  static const u32 MAX_RADIX_SORT_LEVEL = 4;
+  static const u32 MIN_RAXIX_SORT_SIZE = 1;
+
+  int n_radix_sorts = 0;
 
   // Stable sort a set of suffixes with common prefix in-place.
   // It's not really in-place but output is in-place.
-  // cp_len is known common-prefix length of all suffixes - we will look at the
-  //   next char of each suffix for this radix level.
+  // cp_len is known common-prefix length of all suffixes, which is the same as
+  //   the recursive radix sort level - we will look at the next char of each
+  //   suffix for this radix level.
+  // sorting_buf must be at least as big as suffix_indexes.
   int radix_sort_level(const u8* data, const u32 len, u32* suffix_indexes,
-		       u32 n_suffixes, u32 cp_len, u32 radix_buf[RADIX_BUF_SIZE]) {
+		       u32 n_suffixes, u32 cp_len, u32 radix_buf[RADIX_BUF_SIZE],
+		       u32* sorting_buf) {
 
     if(n_suffixes <= 1) {
       // Nothing to do - it's already trivially sorted...
       return SUFFIX_SORT_OK;
     }
+
+    n_radix_sorts++;
 
     // Reset the radix buffer
     for(size_t i = 0; i < RADIX_BUF_SIZE; i++) {
@@ -136,9 +154,9 @@ namespace SimpleSuffixSort {
       radix_buf[c+1] = offset;
     }
 
-    // ... and place each suffix into its radix bucket
-    // for now we need a temporary buffer of indexes... ugh
-    u32* sorted_suffix_indexes = new u32[n_suffixes];
+    // Place each suffix into its radix bucket using the sorting_buf as
+    //   temporary working space.
+    u32* sorted_suffix_indexes = sorting_buf;
 
     for(u32 suffix_no = 0; suffix_no < n_suffixes; suffix_no++) {
       u32 suffix_index = suffix_indexes[suffix_no];
@@ -148,33 +166,48 @@ namespace SimpleSuffixSort {
       sorted_suffix_indexes[sorted_suffix_offset] = suffix_index;
     }
 
-    // ... and copy the buckets back to the original array.
-    // We can avoid this copy with alternating temp/original buffer.
+    // Copy the buckets back to the original array.
+    // We could avoid this copy with alternating temp/original buffer.
     for(u32 suffix_no = 0; suffix_no < n_suffixes; suffix_no++) {
       suffix_indexes[suffix_no] = sorted_suffix_indexes[suffix_no];
     }
     
-    delete[] sorted_suffix_indexes;
-
-    // Finally sort each bucket...
-    // We'll do this recursively eventually...
+    // Recursively sort each bucket...
     for(u32 c = 0; c < 256; c++) {
       u32 bucket_start = c == 0 ? 0 : radix_buf[c-1];
       u32 bucket_end = radix_buf[c];
 
-      cpp_std_sort_suffixes(data, len, suffix_indexes + bucket_start, bucket_end - bucket_start);
+      u32* bucket_suffix_indexes = suffix_indexes + bucket_start;
+      u32 n_bucket_suffixes = bucket_end - bucket_start;
+
+      if(n_bucket_suffixes > 1) {
+	// Use radix sort recursively up til MAX_RADIX_SORT_LEVEL
+	if(cp_len + 1 < MAX_RADIX_SORT_LEVEL && MIN_RAXIX_SORT_SIZE <= n_bucket_suffixes) {
+	  radix_sort_level(data, len, bucket_suffix_indexes, n_bucket_suffixes,
+			   cp_len + 1, radix_buf, sorting_buf);
+	} else {
+	  cpp_std_sort_suffixes(data, len, bucket_suffix_indexes, n_bucket_suffixes);
+	}
+      }
     }
 
     return SUFFIX_SORT_OK;
   }
 
   int radix_sort(const u8* data, const u32 len, u32* SA) {
-    // Count of prefixes with each initial byte.
+    // Used for counts and offsets of radix buffer.
     u32 radix_buf[RADIX_BUF_SIZE];
 
+    // Temporary space for sorting
+    u32* sorting_buf = new u32[len];
+    
     init_sa_identity(SA, len);
     
-    return radix_sort_level(data, len, SA, len, /*cp_len*/0, radix_buf);
+    int rc = radix_sort_level(data, len, SA, len, /*cp_len*/0, radix_buf, sorting_buf);
+
+    delete[] sorting_buf;
+
+    return rc;
   }
 
 } // namespace SimpleSuffixSort
@@ -245,16 +278,23 @@ int main(int argc, char* argv[]) {
   u32* LCP = new u32[len];
 
   auto t0 = Time::now();
-  
-  int rc = do_lcp ?
-    simple_suffix_sort_with_lcp((const u8*)data, len, SA, LCP) :
-    simple_suffix_sort((const u8*)data, len, SA);
+
+  const int N_LOOPS = 1;
+
+  int rc = SUFFIX_SORT_OK;
+  for(int loop_no = 0; loop_no < N_LOOPS; loop_no++) {
+    rc = do_lcp ?
+      simple_suffix_sort_with_lcp((const u8*)data, len, SA, LCP) :
+      simple_suffix_sort((const u8*)data, len, SA);
+  }
 
   auto t1 = Time::now();
   dsec ds1 = t1 - t0;
   double secs1 = ds1.count();
 
-  printf("Suffix array (SA) sort with least-common-prefix (LCP) of data string length %u bytes in %7.3lfms\n", len, secs1*1000.0);
+  printf("Suffix array (SA) sort %sof data string length %u bytes in %7.3lfms\n", (do_lcp ? "with least-common-prefix (LCP) " : ""), len, secs1*1000.0);
+
+  printf("          including %d std::sorts and %d radix sorts\n", SimpleSuffixSort::n_cpp_std_sorts, SimpleSuffixSort::n_radix_sorts);
   
   if(rc) {
     fprintf(stderr, "simple_suffix_sort_with_lcp failed with rc %d\n", rc);
