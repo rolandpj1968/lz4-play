@@ -30,7 +30,7 @@ namespace SimpleSuffixSort {
       int cmp = memcmp(s1, s2, (size_t)min_len);
 
       // Shorter string is considered less if strings match up to shorter string,
-      // according to "normal" suffix sort practice.
+      // according to "normal" suffix sort convention.
       return cmp == 0 ? (len1 < len2) : (cmp < 0);
     }
   }; // struct SuffixLess
