@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "decode.h"
+#include "util.h"
 
 typedef uint64_t u64;
 typedef uint32_t u32;
@@ -26,42 +27,6 @@ const size_t MiB = 1 << 20;
 const size_t KiB = 1 << 10;
 
 const double ms_per_s = 1000.0;
-
-namespace Util {
-    
-  static std::string slurp(const std::string& filepath) {
-    std::ifstream t(filepath);
-    std::string str;
-    
-    t.seekg(0, std::ios::end);   
-    str.reserve(t.tellg());
-    t.seekg(0, std::ios::beg);
-    
-    str.assign((std::istreambuf_iterator<char>(t)),
-	       std::istreambuf_iterator<char>());
-    
-    return str;
-  }
-  
-  u16 u16_at_offset(const void* buf, size_t offset) {
-    // Use misaligned memory access for x86
-    u8* p = ((u8*)buf) + (size_t)offset;
-    return *(u16*)p;
-  }
-  
-  u32 u32_at_offset(const void* buf, size_t offset) {
-    // Use misaligned memory access for x86
-    u8* p = ((u8*)buf) + (size_t)offset;
-    return *(u32*)p;
-  }
-  
-  u64 u64_at_offset(const void* buf, size_t offset) {
-    // Use misaligned memory access for x86
-    u8* p = ((u8*)buf) + (size_t)offset;
-    return *(u64*)p;
-  }
-  
-} // namespace Util
   
 namespace Lz4 {
 
@@ -211,7 +176,7 @@ namespace Lz4 {
 
       size_t header_len = min_header_len;
 	 
-      const u32 magic = Util::u32_at_offset(buf, 0);
+      const u32 magic = u32_at_offset(buf, 0);
 
       if(magic != Frame::LZ4_FRAME_MAGIC) {
 	throw std::string("Invalid lz frame magic number");
@@ -250,7 +215,7 @@ namespace Lz4 {
 	  throw std::string("Input buffer too short for lz4 frame header with content size present");
 	}
 
-	content_size = Util::u64_at_offset(buf, 0);
+	content_size = u64_at_offset(buf, 0);
 
 	buf += sizeof(Frame::Descriptor::content_size);
       }
@@ -264,7 +229,7 @@ namespace Lz4 {
 	  throw std::string("Input buffer too short for lz4 frame header with dictionary ID present");
 	}
 
-	dict_id = Util::u32_at_offset(buf, 0);
+	dict_id = u32_at_offset(buf, 0);
 
 	buf += sizeof(Frame::Descriptor::dict_id);
       }
@@ -285,7 +250,7 @@ namespace Lz4 {
 	throw std::string("Input buffer too short for minimum lz4 block header");
       }
 
-      const u32 block_size = Util::u32_at_offset(buf, 0);
+      const u32 block_size = u32_at_offset(buf, 0);
       
       return Block::Header(block_size);
     }
@@ -335,7 +300,7 @@ size_t show_sequence(const u8* buf, size_t buf_len) {
     throw std::string("Sequence ran out of bytes for match offset");
   }
   
-  u16 offset = Util::u16_at_offset(buf, 0);
+  u16 offset = u16_at_offset(buf, 0);
 
   buf += sizeof(u16);
   buf_len -= sizeof(u16);
