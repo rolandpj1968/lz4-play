@@ -11,14 +11,7 @@ typedef std::chrono::duration<double> dsec;
 
 namespace SimpleSuffixSort {
 
-  struct SuffixLess {
-    const u8* data;
-    const u32 len;
-
-    SuffixLess(const u8* data, const u32 len)
-      : data(data), len(len) {}
-
-    bool operator()(const u32 i1, const u32 i2) {
+  bool suffix_less(const u8* data, const u32 len, const u32 i1, const u32 i2) {
       const u8* s1 = data + i1;
       const u32 len1 = len - i1;
       const u8* s2 = data + i2;
@@ -29,9 +22,38 @@ namespace SimpleSuffixSort {
       // Note that memcmp treats bytes as unsigned char, which is what we want.
       int cmp = memcmp(s1, s2, (size_t)min_len);
 
+      if(i1 == 2047 && i2 == 2303) {
+	printf("                                           2047 %p vs 2303 %p - len is %u, len1 is %u, len2 is %u, min_len is %u, memcmp is %d\n", s1, s2, len, len1, len2, min_len, cmp);
+	printf("                                            memcmp(s1, s2, 2) is %d\n", memcmp(s1, s2, 2));
+	for(u32 j = 0; j < min_len; j++) {
+	  if(data[i1 + j] != data[i2 + j]) {
+	    printf("              ... first different character at %u - 0x%02x vs 0x%02x\n", j, (u8)data[i1 + j], (u8)data[i2 + j]);
+	    break;
+	  }
+	}
+      }
+
       // Shorter string is considered less if strings match up to shorter string,
       // according to "normal" suffix sort convention.
       return cmp == 0 ? (len1 < len2) : (cmp < 0);
+  }
+
+  struct SuffixLess {
+    const u8* data;
+    const u32 len;
+
+    SuffixLess(const u8* data, const u32 len)
+      : data(data), len(len) {}
+
+    bool operator()(const u32 i1, const u32 i2) {
+      bool less = suffix_less(data, len, i1, i2);
+      if(i1 == 2047 || i2 == 2047 || i1 == 2303 || i2 == 2303) {
+	printf("                                      %u < %u - %s\n", i1, i2, (less ? "yes" : "no"));
+	if(i1 == 2047 && i2 == 2303) {
+	  printf("                                           bingo\n");
+	}
+      }
+      return less;
     }
   }; // struct SuffixLess
 
@@ -52,7 +74,7 @@ namespace SimpleSuffixSort {
   }
 
   // Initialise the suffix array SA with identity order
-  void init_sa_identity(u32* SA, const u32 len) {
+  static void init_sa_identity(u32* SA, const u32 len) {
     for(u32 i = 0; i < len; i++) {
       SA[i] = i;
     }
@@ -81,7 +103,7 @@ namespace SimpleSuffixSort {
   }
 
   static const size_t RADIX_BUF_SIZE = 256 + 1; // u8 range plus one extra
-  static const u32 MAX_RADIX_SORT_LEVEL = 4;
+  static const u32 MAX_RADIX_SORT_LEVEL = 0;
   static const u32 MIN_RAXIX_SORT_SIZE = 1;
 
   int n_radix_sorts = 0;
@@ -93,7 +115,7 @@ namespace SimpleSuffixSort {
   //   suffix for this radix level.
   // sorting_buf must be at least as big as suffix_indexes.
   int radix_sort_level(const u8* data, const u32 len, u32* suffix_indexes,
-		       u32 n_suffixes, u32 cp_len, u32 radix_buf[RADIX_BUF_SIZE],
+		       u32 n_suffixes, u32 cp_len,
 		       u32* sorting_buf) {
 
     if(n_suffixes <= 1) {
@@ -103,7 +125,9 @@ namespace SimpleSuffixSort {
 
     n_radix_sorts++;
 
-    // Reset the radix buffer
+    // Watch out for stack overflow.
+    u32 radix_buf[RADIX_BUF_SIZE];
+
     for(size_t i = 0; i < RADIX_BUF_SIZE; i++) {
       radix_buf[i] = 0;
     }
@@ -180,12 +204,17 @@ namespace SimpleSuffixSort {
       u32* bucket_suffix_indexes = suffix_indexes + bucket_start;
       u32 n_bucket_suffixes = bucket_end - bucket_start;
 
+      if(n_bucket_suffixes > 0) {
+	printf("            - recursive sort depth %u on [0,%u) for char '0x%02x' range [%u, %u)\n", cp_len, n_suffixes, c, bucket_start, bucket_end);
+      }
+      
       if(n_bucket_suffixes > 1) {
 	// Use radix sort recursively up til MAX_RADIX_SORT_LEVEL
-	if(cp_len + 1 < MAX_RADIX_SORT_LEVEL && MIN_RAXIX_SORT_SIZE <= n_bucket_suffixes) {
+	if(cp_len < MAX_RADIX_SORT_LEVEL && MIN_RAXIX_SORT_SIZE <= n_bucket_suffixes) {
 	  radix_sort_level(data, len, bucket_suffix_indexes, n_bucket_suffixes,
-			   cp_len + 1, radix_buf, sorting_buf);
+			   cp_len + 1, sorting_buf);
 	} else {
+	  printf("                          - cpp sort\n");
 	  cpp_std_sort_suffixes(data, len, bucket_suffix_indexes, n_bucket_suffixes);
 	}
       }
@@ -195,15 +224,12 @@ namespace SimpleSuffixSort {
   }
 
   int radix_sort(const u8* data, const u32 len, u32* SA) {
-    // Used for counts and offsets of radix buffer.
-    u32 radix_buf[RADIX_BUF_SIZE];
-
     // Temporary space for sorting
     u32* sorting_buf = new u32[len];
     
     init_sa_identity(SA, len);
     
-    int rc = radix_sort_level(data, len, SA, len, /*cp_len*/0, radix_buf, sorting_buf);
+    int rc = radix_sort_level(data, len, SA, len, /*cp_len*/0, sorting_buf);
 
     delete[] sorting_buf;
 
@@ -254,23 +280,21 @@ int simple_suffix_sort_with_lcp(const u8* data, const u32 len, u32* SA, u32* LCP
 int main(int argc, char* argv[]) {
   printf("Hallo RPJ\n");
 
-  const char* data;
-  u32 len;
+  std::string data_string;
   bool do_lcp = false;
   bool show_suffixes = false;
 
   if(argc <= 1) {
     // data = "banana";
-    data = "abracadabra banana abracadabra";
+    data_string = "abracadabra banana abracadabra";
     show_suffixes = true;
-    len = strlen(data);
   } else {
     std::string filename = argv[1];
-    std::string s = Util::slurp(filename);
-    data = s.c_str();
-    len = s.length();
+    data_string = Util::slurp(filename);
   }
   
+  const char* data = data_string.c_str();;
+  u32 len = data_string.length();
 
   printf("Using data string of length %u bytes\n", len);
 
@@ -299,6 +323,26 @@ int main(int argc, char* argv[]) {
   if(rc) {
     fprintf(stderr, "simple_suffix_sort_with_lcp failed with rc %d\n", rc);
     exit(1);
+  }
+
+  // Check suffix array
+  for(u32 i = 1; i < len; i++) {
+    if(!SimpleSuffixSort::suffix_less((const u8*)data, len, SA[i-1], SA[i])) {
+      printf("SA[%u] = %u starting 0x%02x is not less than SA[%u] = %u starting 0x%02x\n", i-1, SA[i-1], data[SA[i-1]], i, SA[i], data[SA[i]]);
+
+      // Where do they first differ...
+      u32 i1 = SA[i-1], i2 = SA[i];
+      u32 len1 = len - i1, len2 = len - i2;
+      u32 min_len = std::min(len1, len2);
+      for(u32 j = 0; j < min_len; j++) {
+	if(data[i1 + j] != data[i2 + j]) {
+	  printf("              ... first different character at %u - 0x%02x vs 0x%02x\n", j, (u8)data[i1 + j], (u8)data[i2 + j]);
+	  break;
+	}
+      }
+      
+      exit(1);
+    }
   }
 
   if(show_suffixes) {
