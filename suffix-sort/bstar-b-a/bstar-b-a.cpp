@@ -321,6 +321,81 @@ namespace BstarBA {
   //   On output the sorted B* indexes will be at the start of the buffer.
   void sort_bstar(const u8* data, const u32 len, u32 A[256], u32 B[256*256],
 		  u32* bstar_buffer, u32 bb_len, u32 n_bstar) {
+
+    // Radix sort of the B* indexes on their first two character (c0, c1).
+
+    // Transpose B* (c0, c1) bucket counts in B to bucket offsets.
+    // The B* bucket counts are in the B[] array with (c0, c1) order inverted,
+    //  so for all c0, c1 where c0 < c1 (only possible case for B*), the B[]
+    //  index is B[c1*256 + c0]
+    u32 offset = 0;
+    for(u32 c0 = 0; c0 < 256; c0++) {
+      for(u32 c1 = c0+1; c1 < 256; c1++) {
+	u32 bucket_index = c1*256 + c0;
+	u32 bucket_count = B[bucket_index];
+	// if(c0 < 5) {
+	//   printf("              offseting B* for 0x%02x, 0x%02x - offset is %u count %u\n", c0, c1, offset, bucket_count);
+	// }
+	B[bucket_index] = offset;
+	offset += bucket_count;
+      }
+    }
+    // printf("\n      final offset is %u expecting %u\n\n", offset, n_bstar);
+
+    // for(u32 c0 = 0; c0 < 1; c0++) {
+    //   for(u32 c1 = c0+1; c1 < 5; c1++) {
+    // 	printf("                        offset 0x%02x 0x%02x is %u\n", c0, c1, B[c1*256 + c0]);
+    //   }
+    // }
+    // printf("\n");
+
+    // Radix sort the B* suffixes
+    for(u32 bstar_i = 0; bstar_i < n_bstar; bstar_i++) {
+      u32 bstar_index = bstar_buffer[bb_len-n_bstar+bstar_i];
+      u32 c0 = data[bstar_index], c1 = data[bstar_index+1];
+      // Ha - on little endian this is just a single non-aligned 2-byte mem read
+      u32 B_index = c1*256 + c0;
+      bstar_buffer[B[B_index]++] = bstar_index;
+    }
+
+    // printf("     after radix sort:\n");
+    // for(u32 c0 = 0; c0 < 1; c0++) {
+    //   for(u32 c1 = c0+1; c1 < 5; c1++) {
+    // 	printf("                        offset 0x%02x 0x%02x is %u\n", c0, c1, B[c1*256 + c0]);
+    //   }
+    // }
+    // printf("\n");
+    
+    // Then suffix-sort the B* indexes, bucket by bucket
+    // TODO this is not O(N)
+    u32 bucket_start_offset = 0;
+    for(u32 c0 = 0; c0 < 256; c0++) {
+      for(u32 c1 = c0+1; c1 < 256; c1++) {
+	u32 bucket_index = c1*256 + c0;
+	u32 bucket_end_offset = bucket_index == 255*256 + 254 ? n_bstar : B[bucket_index];
+	u32 bucket_size = bucket_end_offset - bucket_start_offset;
+
+	// if(c0 < 5) {
+	//   printf("              sorting B* for 0x%02x, 0x%02x - bucket start is %u size %u\n", c0, c1, bucket_start_offset, bucket_size);
+	// }
+
+	if(bucket_size > 1) {
+	  cpp_std_sort_suffixes((const u8*)data, len, bstar_buffer + bucket_start_offset, bucket_size);
+	}
+	bucket_start_offset = bucket_end_offset;
+      }
+    }
+  }
+  
+  // Sort the B* suffixes.
+  // We need an O(N) algo here.
+  // For now just straight c++ std::stable_sort().
+  // Next step - radix sort over (c0, c1) buckets then sort each bucket.
+  // bstar_buffer MUST be large enough to accommodate 2* n_bstar:
+  //   On input, the (unsorted) B* indexes are at the end of the buffer;
+  //   On output the sorted B* indexes will be at the start of the buffer.
+  void sort_bstar_dumb(const u8* data, const u32 len, u32 A[256], u32 B[256*256],
+		  u32* bstar_buffer, u32 bb_len, u32 n_bstar) {
     // Copy the B* indexes from the end of bstar_buffer to the start - this will
     //   be replaced by a radix sort down-copy... TODO
     memcpy(bstar_buffer, bstar_buffer + bb_len - n_bstar, n_bstar * sizeof(u32));
