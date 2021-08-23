@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include <byteswap.h>
+
 #include "suffix-sort.h"
 #include "util.h"
 
@@ -18,6 +20,21 @@ namespace SimpleSuffixSort {
       const u32 len2 = len - i2;
 
       const u32 min_len = std::min(len1, len2);
+
+      // Fast path - do one u64 (8-byte) comparison before resorting to memcmp.
+      // This assumes misaligned u64 memory access.
+      // Note bswap_64() to correct for x86 endinaness.
+      // No performance advantage :(
+      if(false && min_len >= 8) {
+	u64 prefix1 = bswap_64(u64_at_offset(s1, 0));
+	u64 prefix2 = bswap_64(u64_at_offset(s2, 0));
+
+	if(prefix1 != prefix2) {
+	  return prefix1 < prefix2;
+	}
+
+	// If the prefixes are equal then fall thru to memcmp..
+      }
 
       // Note that memcmp treats bytes as unsigned char, which is what we want.
       int cmp = memcmp(s1, s2, (size_t)min_len);
@@ -86,7 +103,7 @@ namespace SimpleSuffixSort {
   }
 
   static const size_t RADIX_BUF_SIZE = 256 + 1; // u8 range plus one extra
-  static const u32 MAX_RADIX_SORT_LEVEL = 1;
+  static const u32 MAX_RADIX_SORT_LEVEL = 2;
   static const u32 MIN_RADIX_SORT_SIZE = 1;
 
   int n_radix_sorts = 0;
@@ -157,6 +174,7 @@ namespace SimpleSuffixSort {
     // Now we convert initial char counts into radix bucket offsets.
     u32 offset = 0;
     for(u32 c = 0; c < 256; c++) {
+      //printf("                             radix 0x%02x count %u\n", c, radix_buf[c+1]);
       offset += radix_buf[c+1];
       radix_buf[c+1] = offset;
     }
@@ -265,6 +283,9 @@ int simple_suffix_sort_with_lcp(const u8* data, const u32 len, u32* SA, u32* LCP
 int main(int argc, char* argv[]) {
   printf("Hallo RPJ\n");
 
+  u8 u8s[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+  printf("u64 at offset 0 is 0x%016lx, u64 at offset 1 is 0x%016lx\n", u64_at_offset(u8s, 0), u64_at_offset(u8s, 1));
+
   std::string data_string;
   bool do_lcp = false;
   bool show_suffixes = false;
@@ -312,8 +333,12 @@ int main(int argc, char* argv[]) {
 
   // Check suffix array
   for(u32 i = 1; i < len; i++) {
-    if(!SimpleSuffixSort::suffix_less((const u8*)data, len, SA[i-1], SA[i])) {
-      printf("SA[%u] = %u starting 0x%02x is not less than SA[%u] = %u starting 0x%02x\n", i-1, SA[i-1], data[SA[i-1]], i, SA[i], data[SA[i]]);
+    u32 index1 = SA[i-1], index2 = SA[i];
+    if(!SimpleSuffixSort::suffix_less((const u8*)data, len, index1, index2)) {
+      printf("SA[%u] = %u starting 0x%02x is not less than SA[%u] = %u starting 0x%02x\n", i-1, index1, data[index1], i, index2, data[index2]);
+      u64 prefix1 = u64_at_offset(data, index1), prefix2 = u64_at_offset(data, index2);
+      printf("  u64 at %u is 0x%016lx, u64 at %u is 0x%016lx\n", index1, prefix1, index2, prefix2);
+      
       exit(1);
     }
   }
