@@ -183,13 +183,71 @@ typedef std::chrono::duration<double> dsec;
 
 namespace BstarBA {
 
-  enum SuffixType { SuffixType_A, SuffixType_B, SuffixType_Bstar };
+  // Count A prefixes in each c0-bucket and count B/B* prefixes in each (c0, c1)
+  // bucket.
+  // The B array is used for both B and B* counts per Yuta Mori divsufsort.
+  // Also, log all B* indexes into the top of the given bstar_indexes buffer,
+  //   which MUST be large enough to hold all the B* indexes - formally at least
+  //   len/2.
+  // Finally return the number of B* suffixes.
+  u32 count_a_b_bstar(const u8* data, const u32 len, u32 A[256],
+		       u32 B[256*256], u32* bstar_indexes, u32 bi_len) {
+    memset(A, 0, 256*sizeof(A[0]));
+    memset(B, 0, 256*256*sizeof(B[0]));
+
+    // We log the B* indexes top-down into bstar_indexes, which means they
+    // end up in-order, since we're running downwards through the data string.
+    u32* bstar_cursor = &bstar_indexes[bi_len-1];
+
+    // Last suffix is always A cos end-of-string is considered smaller than
+    // any alphabet character
+    bool was_B = false;
+    u8 c0 = data[len-1];
+    A[c0] += 1;
+
+    // Run backwards through the data string.
+    for(i32 index = len-2; index >= 0; index--) {
+      u8 c1 = c0;
+      c0 = data[index];
+
+      bool is_B;
+
+      if(c0 < c1) {
+	// B
+	is_B = true;
+      } else if(c0 == c1) {
+	// Same as previous
+	is_B = was_B;
+      } else /* c0 > c1 */ {
+	// A
+	is_B = false;
+      }
+
+      if(is_B) {
+	if(was_B) {
+	  // B but not not B*
+	  B[c0*256 + c1] += 1;
+	} else {
+	  // B*
+	  B[c1*256 + c0] += 1;
+	  // Log the B* index
+	  *bstar_cursor-- = index;
+	}
+      } else {
+	A[c0] += 1;
+      }
+
+      was_B = is_B;
+    }
+
+    return &bstar_indexes[bi_len-1] - bstar_cursor;
+  }
 
   // Param cond MUST be 0 or 1
   // return addr if cond, else NULL
   void* select_addr_if(void* addr, int cond) {
     // TODO should really use pointer-equiv integer size - this is 64-bit arch
-    // specific
+    //   specific
     return (void *)(((i64)addr) & (-(i64)cond));
   }
 
@@ -198,14 +256,17 @@ namespace BstarBA {
     return (void*)(((i64)addr1) | ((i64)addr2) | ((i64)addr3));
   }
 
-  // Count A prefixes in each c0-bucket and count B/B* prefixes in each (c0, c1)
-  // bucket.
-  // The B array is used for both B and B* counts per Yuta Mori divsufsort.
+  // Same as count_a_b_bstar(...)
   // Code attempts to be non-branching.
-  // But it's no faster than branching code :D - possibly slower
-  void count_a_b_bstar_nobranch(const u8* data, const u32 len, u32 A[256], u32 B[256*256]) {
+  // But it's slower than branching code :D
+  u32 count_a_b_bstar_nobranch(const u8* data, const u32 len, u32 A[256],
+				u32 B[256*256], u32* bstar_indexes, u32 bi_len) {
     memset(A, 0, 256*sizeof(A[0]));
     memset(B, 0, 256*256*sizeof(B[0]));
+
+    // We log the B* indexes top-down into bstar_indexes, which means they
+    // end up in-order, since we're running downwards through the data string.
+    u32* bstar_cursor = &bstar_indexes[bi_len-1];
 
     // Last suffix is always A cos end-of-string is considered smaller than
     // any alphabet character
@@ -240,104 +301,17 @@ namespace BstarBA {
 					       select_addr_if(&B[c0*256 + c1], is_B),
 					       select_addr_if(&B[c1*256 + c0], is_Bstar));
 					       
-
+      // Increment the bucket counter for this suffix type
       *addr += 1;
-      // A[c0] += is_A;
 
-      // B[c0*256 + c1] += is_B;
-
-      // B[c1*256 + c0] += is_Bstar;
+      // Log the B* index
+      *bstar_cursor = index;
+      bstar_cursor -= is_Bstar;
     }
+    
+    return &bstar_indexes[bi_len-1] - bstar_cursor;
   }
 
-  // Count A prefixes in each c0-bucket and count B/B* prefixes in each (c0, c1)
-  // bucket.
-  // The B array is used for both B and B* counts per Yuta Mori divsufsort.
-  // Code attempts to be non-branching.
-  // But it's no faster than branching code :D - possibly slower
-  void count_a_b_bstar(const u8* data, const u32 len, u32 A[256], u32 B[256*256]) {
-    memset(A, 0, 256*sizeof(A[0]));
-    memset(B, 0, 256*256*sizeof(B[0]));
-
-    // Last suffix is always A cos end-of-string is considered smaller than
-    // any alphabet character
-    bool was_B = false;
-    u8 c0 = data[len-1];
-    A[c0] += 1;
-
-    // Run backwards through the data string.
-    for(i32 index = len-2; index >= 0; index--) {
-      u8 c1 = c0;
-      c0 = data[index];
-
-      bool is_B;
-
-      if(c0 < c1) {
-	// B
-	is_B = true;
-      } else if(c0 == c1) {
-	// Same as previous
-	is_B = was_B;
-      } else /* c0 > c1 */ {
-	// A
-	is_B = false;
-      }
-
-      if(is_B) {
-	if(was_B) {
-	  // B but not not B*
-	  B[c0*256 + c1] += 1;
-	} else {
-	  // B*
-	  B[c1*256 + c0] += 1;
-	}
-      } else {
-	A[c0] += 1;
-      }
-
-      was_B = is_B;
-    }
-  }
-
-  // Count number A, B and B* prefixes in each (c0, c1) bucket. The only suffix
-  // excluded from this count is the very last single-character suffix.
-  // TODO can use single array for B and Bstar like divsufsort.
-  // TODO divsufsort only counts A for single-char buckets.
-  void count_a_b_bstar_per_bucket(const u8* data, const u32 len, u32 A[256*256],
-				   u32 B[256*256], u32 Bstar[256*256]) {
-    memset(A, 0, 256*256*sizeof(A[0]));
-    memset(B, 0, 256*256*sizeof(B[0]));
-    memset(Bstar, 0, 256*256*sizeof(Bstar[0]));
-
-    u32* counts[] = { A, B, Bstar };
-
-    // The single-character last suffix is considered 'A' since end-of-string is
-    // considered to precede all alphabet characters.
-    SuffixType last_suffix_type = SuffixType_A;
-
-    for(u32 index_plus_one = len - 1; index_plus_one > 0; index_plus_one--) {
-      u32 index = index_plus_one - 1;
-      u8 c0 = data[index];
-      u8 c1 = data[index+1];
-
-      SuffixType suffix_type;
-      if(c0 > c1) {
-	suffix_type = SuffixType_A;
-      } else if(c0 == c1) {
-	suffix_type = last_suffix_type;
-      } else /*c0 < c1*/ {
-	if(last_suffix_type == SuffixType_A) {
-	  suffix_type = SuffixType_Bstar;
-	} else {
-	  suffix_type = SuffixType_B;
-	}
-      }
-
-      counts[suffix_type][c0*256 + c1]++;
-
-      last_suffix_type = suffix_type == SuffixType_Bstar ? SuffixType_B : suffix_type;
-    }
-  }
 } // namespace BstarBA
 
 #ifdef BSTAR_B_A_SUFFIX_SORT_MAIN
@@ -369,19 +343,19 @@ int main(int argc, char* argv[]) {
 
   printf("Using data string of length %u bytes\n", len);
 
-  //u32* A = new u32[256*256];
   u32* A = new u32[256];
   u32* B = new u32[256*256];
-  //u32* Bstar = new u32[256*256];
 
+  u32* SA = new u32[len];
+  
   auto t0 = Time::now();
 
   const int N_LOOPS = 100;
 
   for(int loop_no = 0; loop_no < N_LOOPS; loop_no++) {
-    //BstarBA::count_a_b_bstar_per_bucket((const u8*)data, len, A, B, Bstar);
-    //BstarBA::count_a_b_bstar_nobranch((const u8*)data, len, A, B);
-    BstarBA::count_a_b_bstar((const u8*)data, len, A, B);
+    // Use SA as the temporary B* index buffer
+    BstarBA::count_a_b_bstar((const u8*)data, len, A, B, SA, len);
+    //BstarBA::count_a_b_bstar_nobranch((const u8*)data, len, A, B, SA, len);
   }
 
   auto t1 = Time::now();
@@ -395,27 +369,6 @@ int main(int argc, char* argv[]) {
   u32 nB = 0, maxB = 0, maxBBucket = 0;
   u32 nBstar = 0, maxBstar = 0, maxBstarBucket = 0;
 
-#if 0
-  for(u32 bucket = 0; bucket < 256*256; bucket++) {
-    nA += A[bucket];
-    if(A[bucket] > maxA) {
-      maxA = A[bucket];
-      maxABucket = bucket;
-    }
-
-    nB += B[bucket];
-    if(B[bucket] > maxB) {
-      maxB = B[bucket];
-      maxBBucket = bucket;
-    }
-
-    nBstar += Bstar[bucket];
-    if(Bstar[bucket] > maxBstar) {
-      maxBstar = Bstar[bucket];
-      maxBstarBucket = bucket;
-    }
-  }
-#endif //0
   for(u32 c0 = 0; c0 < 256; c0++) {
     nA += A[c0];
     if(A[c0] > maxA) {
