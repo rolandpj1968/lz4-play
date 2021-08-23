@@ -185,11 +185,25 @@ namespace BstarBA {
 
   enum SuffixType { SuffixType_A, SuffixType_B, SuffixType_Bstar };
 
+  // Param cond MUST be 0 or 1
+  // return addr if cond, else NULL
+  void* select_addr_if(void* addr, int cond) {
+    // TODO should really use pointer-equiv integer size - this is 64-bit arch
+    // specific
+    return (void *)(((i64)addr) & (-(i64)cond));
+  }
+
+  // Only one addr can be non-NULL, and rest MUST be NULL
+  void* select_non_null_addr3(void* addr1, void* addr2, void* addr3) {
+    return (void*)(((i64)addr1) | ((i64)addr2) | ((i64)addr3));
+  }
+
   // Count A prefixes in each c0-bucket and count B/B* prefixes in each (c0, c1)
   // bucket.
   // The B array is used for both B and B* counts per Yuta Mori divsufsort.
-  // Code attempts to be non-branching. But it's no faster than branching code :D
-  void count_a_b_bstar(const u8* data, const u32 len, u32 A[256], u32 B[256*256]) {
+  // Code attempts to be non-branching.
+  // But it's no faster than branching code :D - possibly slower
+  void count_a_b_bstar_nobranch(const u8* data, const u32 len, u32 A[256], u32 B[256*256]) {
     memset(A, 0, 256*sizeof(A[0]));
     memset(B, 0, 256*256*sizeof(B[0]));
 
@@ -222,11 +236,66 @@ namespace BstarBA {
 
       //printf("          index %2d (%c, %c) was_A %d is_A %d is_B %d is_Bstar %d\n", index, c0, c1, was_A, is_A, is_B, is_Bstar);
 
-      A[c0] += is_A;
+      u32* addr = (u32*) select_non_null_addr3(select_addr_if(&A[c0], is_A),
+					       select_addr_if(&B[c0*256 + c1], is_B),
+					       select_addr_if(&B[c1*256 + c0], is_Bstar));
+					       
 
-      B[c0*256 + c1] += is_B;
+      *addr += 1;
+      // A[c0] += is_A;
 
-      B[c1*256 + c0] += is_Bstar;
+      // B[c0*256 + c1] += is_B;
+
+      // B[c1*256 + c0] += is_Bstar;
+    }
+  }
+
+  // Count A prefixes in each c0-bucket and count B/B* prefixes in each (c0, c1)
+  // bucket.
+  // The B array is used for both B and B* counts per Yuta Mori divsufsort.
+  // Code attempts to be non-branching.
+  // But it's no faster than branching code :D - possibly slower
+  void count_a_b_bstar(const u8* data, const u32 len, u32 A[256], u32 B[256*256]) {
+    memset(A, 0, 256*sizeof(A[0]));
+    memset(B, 0, 256*256*sizeof(B[0]));
+
+    // Last suffix is always A cos end-of-string is considered smaller than
+    // any alphabet character
+    bool was_B = false;
+    u8 c0 = data[len-1];
+    A[c0] += 1;
+
+    // Run backwards through the data string.
+    for(i32 index = len-2; index >= 0; index--) {
+      u8 c1 = c0;
+      c0 = data[index];
+
+      bool is_B;
+
+      if(c0 < c1) {
+	// B
+	is_B = true;
+      } else if(c0 == c1) {
+	// Same as previous
+	is_B = was_B;
+      } else /* c0 > c1 */ {
+	// A
+	is_B = false;
+      }
+
+      if(is_B) {
+	if(was_B) {
+	  // B but not not B*
+	  B[c0*256 + c1] += 1;
+	} else {
+	  // B*
+	  B[c1*256 + c0] += 1;
+	}
+      } else {
+	A[c0] += 1;
+      }
+
+      was_B = is_B;
     }
   }
 
@@ -307,10 +376,11 @@ int main(int argc, char* argv[]) {
 
   auto t0 = Time::now();
 
-  const int N_LOOPS = 1;
+  const int N_LOOPS = 100;
 
   for(int loop_no = 0; loop_no < N_LOOPS; loop_no++) {
     //BstarBA::count_a_b_bstar_per_bucket((const u8*)data, len, A, B, Bstar);
+    //BstarBA::count_a_b_bstar_nobranch((const u8*)data, len, A, B);
     BstarBA::count_a_b_bstar((const u8*)data, len, A, B);
   }
 
