@@ -7,10 +7,6 @@
 
 #include <string>
 
-namespace Util {
-  std::string slurp(const std::string& filepath);
-} // namespace Util
-
 extern "C" {
 #endif
 
@@ -31,9 +27,31 @@ static inline u64 u64_at_offset(const void* buf, size_t offset) {
   u8* p = ((u8*)buf) + (size_t)offset;
   return *(u64*)p;
 }
+
+bool suffix_less(const u8* data, const u32 len, const u32 i1, const u32 i2);
+
+extern int n_cpp_std_sorts;  
+void cpp_std_sort_suffixes(const u8* data, const u32 len, u32* suffix_indexes, u32 n_suffixes);
   
 #ifdef __cplusplus
-}
-#endif
+namespace Util {
+  std::string slurp(const std::string& filepath);
+
+  struct SuffixLess {
+    const u8* data;
+    const u32 len;
+
+    SuffixLess(const u8* data, const u32 len)
+      : data(data), len(len) {}
+
+    inline bool operator()(const u32 i1, const u32 i2) {
+      return suffix_less(data, len, i1, i2);
+    }
+  }; // struct SuffixLess
+
+} // namespace Util
+
+} //extern "C"
+#endif //def __cplusplus
 
 #endif //def UTIL_H

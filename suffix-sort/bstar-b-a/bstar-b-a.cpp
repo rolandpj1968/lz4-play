@@ -312,6 +312,23 @@ namespace BstarBA {
     return &bstar_indexes[bi_len-1] - bstar_cursor;
   }
 
+  // Sort the B* suffixes.
+  // We need an O(N) algo here.
+  // For now just straight c++ std::stable_sort().
+  // Next step - radix sort over (c0, c1) buckets then sort each bucket.
+  // bstar_buffer MUST be large enough to accommodate 2* n_bstar:
+  //   On input, the (unsorted) B* indexes are at the end of the buffer;
+  //   On output the sorted B* indexes will be at the start of the buffer.
+  void sort_bstar(const u8* data, const u32 len, u32 A[256], u32 B[256*256],
+		  u32* bstar_buffer, u32 bb_len, u32 n_bstar) {
+    // Copy the B* indexes from the end of bstar_buffer to the start - this will
+    //   be replaced by a radix sort down-copy... TODO
+    memcpy(bstar_buffer, bstar_buffer + bb_len - n_bstar, n_bstar * sizeof(u32));
+
+    // Then suffix-sort the B* indexes
+    cpp_std_sort_suffixes((const u8*)data, len, bstar_buffer, n_bstar);
+  }
+
 } // namespace BstarBA
 
 #ifdef BSTAR_B_A_SUFFIX_SORT_MAIN
@@ -350,12 +367,16 @@ int main(int argc, char* argv[]) {
   
   auto t0 = Time::now();
 
-  const int N_LOOPS = 100;
+  const int N_LOOPS = 10;
 
+  u32 n_bstar = 0;
   for(int loop_no = 0; loop_no < N_LOOPS; loop_no++) {
     // Use SA as the temporary B* index buffer
-    BstarBA::count_a_b_bstar((const u8*)data, len, A, B, SA, len);
-    //BstarBA::count_a_b_bstar_nobranch((const u8*)data, len, A, B, SA, len);
+    n_bstar = BstarBA::count_a_b_bstar((const u8*)data, len, A, B, SA, len);
+    //n_bstar = BstarBA::count_a_b_bstar_nobranch((const u8*)data, len, A, B, SA, len);
+
+    // Sort the B* indexes
+    BstarBA::sort_bstar((const u8*)data, len, A, B, SA, len, n_bstar);
   }
 
   auto t1 = Time::now();

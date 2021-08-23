@@ -13,49 +13,6 @@ typedef std::chrono::duration<double> dsec;
 
 namespace SimpleSuffixSort {
 
-  bool suffix_less(const u8* data, const u32 len, const u32 i1, const u32 i2) {
-      const u8* s1 = data + i1;
-      const u32 len1 = len - i1;
-      const u8* s2 = data + i2;
-      const u32 len2 = len - i2;
-
-      const u32 min_len = std::min(len1, len2);
-
-      // Fast path - do one u64 (8-byte) comparison before resorting to memcmp.
-      // This assumes misaligned u64 memory access.
-      // Note bswap_64() to correct for x86 endinaness.
-      // No performance advantage :(
-      if(false && min_len >= 8) {
-	u64 prefix1 = bswap_64(u64_at_offset(s1, 0));
-	u64 prefix2 = bswap_64(u64_at_offset(s2, 0));
-
-	if(prefix1 != prefix2) {
-	  return prefix1 < prefix2;
-	}
-
-	// If the prefixes are equal then fall thru to memcmp..
-      }
-
-      // Note that memcmp treats bytes as unsigned char, which is what we want.
-      int cmp = memcmp(s1, s2, (size_t)min_len);
-
-      // Shorter string is considered less if strings match up to shorter string,
-      // according to "normal" suffix sort convention.
-      return cmp == 0 ? (len1 < len2) : (cmp < 0);
-  }
-
-  struct SuffixLess {
-    const u8* data;
-    const u32 len;
-
-    SuffixLess(const u8* data, const u32 len)
-      : data(data), len(len) {}
-
-    bool operator()(const u32 i1, const u32 i2) {
-      return suffix_less(data, len, i1, i2);
-    }
-  }; // struct SuffixLess
-
   u32 common_prefix_len(const u8* data, const u32 len, const u32 i1, const u32 i2) {
       const u8* s1 = data + i1;
       const u32 len1 = len - i1;
@@ -79,27 +36,12 @@ namespace SimpleSuffixSort {
     }
   }
 
-  int n_cpp_std_sorts = 0;
-
-  int cpp_std_sort_suffixes(const u8* data, const u32 len, u32* suffix_indexes, u32 n_suffixes) {
-    if(n_suffixes <= 1) {
-      // Nothing to do - it's already trivially sorted...
-      return SUFFIX_SORT_OK;
-    }
-
-    n_cpp_std_sorts++;
-
-    // Sort using SuffixLess ordering
-    // std::stable_sort is substantially faster than std::sort :shrug:
-    std::stable_sort(suffix_indexes, suffix_indexes + n_suffixes, SimpleSuffixSort::SuffixLess(data, len));
-    
-    return SUFFIX_SORT_OK;
-  }
-    
   int cpp_std_sort(const u8* data, const u32 len, u32* SA) {
     init_sa_identity(SA, len);
 
-    return cpp_std_sort_suffixes(data, len, SA, len);
+    cpp_std_sort_suffixes(data, len, SA, len);
+
+    return SUFFIX_SORT_OK;
   }
 
   static const size_t RADIX_BUF_SIZE = 256 + 1; // u8 range plus one extra
@@ -324,7 +266,7 @@ int main(int argc, char* argv[]) {
 
   printf("Suffix array (SA) sort %sof data string length %u bytes in %7.3lfms\n", (do_lcp ? "with least-common-prefix (LCP) " : ""), len, secs1/N_LOOPS*1000.0);
 
-  printf("          including %d std::sorts and %d radix sorts\n", SimpleSuffixSort::n_cpp_std_sorts, SimpleSuffixSort::n_radix_sorts);
+  printf("          including %d std::sorts and %d radix sorts\n", n_cpp_std_sorts, SimpleSuffixSort::n_radix_sorts);
   
   if(rc) {
     fprintf(stderr, "simple_suffix_sort_with_lcp failed with rc %d\n", rc);
@@ -334,7 +276,7 @@ int main(int argc, char* argv[]) {
   // Check suffix array
   for(u32 i = 1; i < len; i++) {
     u32 index1 = SA[i-1], index2 = SA[i];
-    if(!SimpleSuffixSort::suffix_less((const u8*)data, len, index1, index2)) {
+    if(!suffix_less((const u8*)data, len, index1, index2)) {
       printf("SA[%u] = %u starting 0x%02x is not less than SA[%u] = %u starting 0x%02x\n", i-1, index1, data[index1], i, index2, data[index2]);
       u64 prefix1 = u64_at_offset(data, index1), prefix2 = u64_at_offset(data, index2);
       printf("  u64 at %u is 0x%016lx, u64 at %u is 0x%016lx\n", index1, prefix1, index2, prefix2);
