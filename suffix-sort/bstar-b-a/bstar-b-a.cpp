@@ -188,7 +188,7 @@ namespace BstarBA {
   // Count A prefixes in each c0-bucket and count B/B* prefixes in each (c0, c1)
   // bucket.
   // The B array is used for both B and B* counts per Yuta Mori divsufsort.
-  // Code attempts to be non-branching.
+  // Code attempts to be non-branching. But it's no faster than branching code :D
   void count_a_b_bstar(const u8* data, const u32 len, u32 A[256], u32 B[256*256]) {
     memset(A, 0, 256*sizeof(A[0]));
     memset(B, 0, 256*256*sizeof(B[0]));
@@ -197,6 +197,7 @@ namespace BstarBA {
     // any alphabet character
     int is_A = 1;
     u8 c0 = data[len-1];
+    A[c0] += 1;
 
     // Run backwards through the data string.
     for(i32 index = len-2; index >= 0; index--) {
@@ -352,19 +353,18 @@ int main(int argc, char* argv[]) {
       maxABucket = c0;
     }
     for(u32 c1 = 0; c1 < 256; c1++) {
+      u32 bucket = c0*256 + c1;
       if(c0 <= c1) {
-	u32 bucket = c0*256 + c1;
 	nB += B[bucket];
 	if(B[bucket] > maxB) {
 	  maxB = B[bucket];
 	  maxBBucket = bucket;
 	}
       } else {
-	u32 bucket = c1*256 + c0;
 	nBstar += B[bucket];
 	if(B[bucket] > maxBstar) {
 	  maxBstar = B[bucket];
-	  maxBstarBucket = bucket;
+	  maxBstarBucket = c1*256 + c0;
 	}
       }
     }
@@ -374,6 +374,7 @@ int main(int argc, char* argv[]) {
   printf("A %u maxA %u maxA-bucket 0x%02x\n", nA, maxA, maxABucket);
   printf("B %u maxB %u maxB-bucket 0x%04x\n", nB, maxB, maxBBucket);
   printf("Bstar %u maxBstar %u maxBstar-bucket 0x%04x\n", nBstar, maxBstar, maxBstarBucket);
+  printf("total %u expecting %u\n", nA + nB + nBstar, len);
 }
 
 #endif //def BSTAR_B_A_SUFFIX_SORT_MAIN
